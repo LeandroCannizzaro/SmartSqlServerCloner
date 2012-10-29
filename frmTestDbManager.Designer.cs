@@ -99,7 +99,6 @@ namespace TestDatabaseCreation
             this.listTables.Size = new System.Drawing.Size(661, 438);
             this.listTables.TabIndex = 4;
             this.listTables.UseCompatibleStateImageBehavior = false;
-            this.listTables.SelectedIndexChanged += new System.EventHandler(this.listTables_SelectedIndexChanged);
             // 
             // lblSourceServer
             // 
