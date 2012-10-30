@@ -102,7 +102,6 @@
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
     </Compile>
     <Compile Include="TestDbManager.cs" />
-    <Compile Include="Trash.cs" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="DatabaseXmlDrivers\" />

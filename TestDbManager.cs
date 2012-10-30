@@ -1,4 +1,5 @@
-﻿using System;
+﻿//Author: leandro.cannizzaro@gmail.com
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -20,6 +21,10 @@ namespace TestDatabaseCreation
     //Copia i dati da un server/database sorgente a un server/database destinazione. Usando se richiesto una copia personalizzabile per tabella
     public class TestDbManager
     {
+        //Numero massimo di righe copiate dalla sorgente alla destinazione
+        //E' basso per il debug (Modificare o eliminare quando si usa in produzione)
+        const int MAXROWS_FETCHED = 10000;
+
         //Oggetti di interfaccia per il feedback visivo delle operazioni.
         //Devono essere impostati prima dell'uso dei metodi che effettuano le elaborazioni.
         public Label statusLabel;
@@ -132,8 +137,10 @@ namespace TestDatabaseCreation
             //Se necessario si possono replicare anche i jobs
             //CopyServerObject<Job>(ServerBasePath(), sourceServer, targetServer, sourceServer.JobServer.Jobs, targetServer.JobServer.Jobs);
 
-            //Aggiorna sul server di destinazione lo schema del server sorgente
-            DatabasesSchemaClone();
+            //Aggiorno lo stato visuale indicando che l'elaborazione e' terminata.
+            Status("Update schema for server " + targetServer.Name + " completed.");
+            progressBar.Value = 0;
+
         }
 
         //Ricrea sul server di destinazione tutti i database (non di sistema) presenti sul server sorgente
@@ -147,6 +154,9 @@ namespace TestDatabaseCreation
                     DatabaseSchemaClone(sourceDatabase.Name);
                 }
             }
+            //Aggiorno lo stato visuale indicando che l'elaborazione e' terminata.
+            Status("Update all databases schema for server " + targetServer.Name + " completed.");
+            progressBar.Value = 0;
         }
 
         //Ricrea sul server di destinazione lo schema del database indicato come parametro.
@@ -179,6 +189,7 @@ namespace TestDatabaseCreation
                 CopyDatabaseStructure(sourceDatabase, targetDatabase);
 
         }
+
         //Replica sul database di destinazione la struttura del db sorgente
         public void CopyDatabaseStructure(Database sourceDatabase, Database targetDatabase)
         {
@@ -195,17 +206,19 @@ namespace TestDatabaseCreation
             CopyDatabaseObject<Microsoft.SqlServer.Management.Smo.Rule>(databaseBasePath, sourceDatabase, targetDatabase, sourceDatabase.Rules, targetDatabase.Rules);
             CopyDatabaseObject<Schema>(databaseBasePath, sourceDatabase, targetDatabase, sourceDatabase.Schemas, targetDatabase.Schemas);
             CopyDatabaseObject<Table>(databaseBasePath, sourceDatabase, targetDatabase, sourceDatabase.Tables, targetDatabase.Tables);
-            foreach (Table sourceTable in sourceDatabase.Tables)
-            {
-                if (!sourceTable.IsSystemObject)
-                {
-                    Table targetTable = targetDatabase.Tables[sourceTable.Name];
-                    if (sourceTable.Triggers.Count > 0)
-                        CopyDatabaseObject<Trigger>(databaseBasePath, sourceDatabase, targetDatabase, sourceTable.Triggers, targetTable.Triggers);
-                    if (sourceTable.Checks.Count > 0)
-                        CopyDatabaseObject<Trigger>(databaseBasePath, sourceDatabase, targetDatabase, sourceTable.Checks, targetTable.Checks);
-                }
-            }
+
+            
+            //TODO Creazione dei trigger per tutte le tabelle
+            //Vedi nota nel metodo CopyDatabaseObject
+            //foreach (Table sourceTable in sourceDatabase.Tables)
+            //{
+            //    if (!sourceTable.IsSystemObject)
+            //    {
+            //        Table targetTable = targetDatabase.Tables[sourceTable.Name];
+            //        if (sourceTable.Triggers.Count > 0)
+            //            CopyDatabaseObject<Trigger>(databaseBasePath, sourceDatabase, targetDatabase, sourceTable.Triggers, targetTable.Triggers);
+            //    }
+            //}
 
             CopyDatabaseObject<Microsoft.SqlServer.Management.Smo.View>(databaseBasePath, sourceDatabase, targetDatabase, sourceDatabase.Views, targetDatabase.Views);
             CopyDatabaseObject<StoredProcedure>(databaseBasePath, sourceDatabase, targetDatabase, sourceDatabase.StoredProcedures, targetDatabase.StoredProcedures);
@@ -217,7 +230,7 @@ namespace TestDatabaseCreation
             Status("Update schema for database " + sourceDatabase.Name + " completed.");
         }
 
-        //Metodo generico he copia tutti gli oggetti di un determinato tipo da un db sorgente a un db destinazione.
+        //Metodo generico he copia tutti gli oggetti sql server, figli di un database e di un determinato tipo, da un db sorgente a un db destinazione.
         //Inoltre crea per ogni oggetto il file di script sql usato per la creazione.
         //Gli script da usare vengono richiesti al framework smo e eseguiti.
         public void CopyDatabaseObject<T>(string databaseBasePath, Database sourceDatabase, Database targetDatabase, ICollection sourceCollection, ICollection targetCollection)
@@ -263,7 +276,7 @@ namespace TestDatabaseCreation
             progressBar.Value = 0;
             progressBar.Maximum = list.Count;
 
-            //CIclo che fa l'operazione di copia effettiva
+            //Ciclo che fa l'operazione di copia effettiva
             foreach (T t in list)
             {
                 Application.DoEvents();
@@ -278,12 +291,21 @@ namespace TestDatabaseCreation
                 if (!Contains(targetCollection, Name))
                 {
                     //Imposto il nome del file di script sql da creare
-                    String fileName = Path.Combine(TBasePath, Name.Replace(@"\", "_").Replace(@":", "_")) + ".sql";
+                    String fileName = Path.Combine(TBasePath, Name.Replace(@"\", "_").Replace(@":", "_").Replace("\\", "")) + ".sql";
                     
                     //Chiedo a smo di restiruirmi lo script di creazione dell'oggetto
                     //In caso di fallimento scrivo sul log e vado avanti
                     scriptingOptions.FileName = fileName; //Chiedo di salvare lo script su un file.
+                    
+                    //Nel caso di oggetto tabella genera gli script per la creazione dei trigger
+                    //TODO Da valutare se crearli tabella per tabella o tutti insieme dopo la creazione di tutte le tabelle
+                    //Bisogna verificare se ci sono problemi di creazione se inserisco un trigger il cui testo fa' riferimento a
+                    //Tabelle e/o altri oggetti db non ancora creati.
+                    //In questo caso bisogna creare tutti i trigger dopo la creazione delle tabelle.
+                    //Il codice per far questo e' inserito per ora commentato (e ancora da testare)
+                    //nel metodo CopyDatabaseStructure
                     scriptingOptions.Triggers = true;
+                    
                     scriptingOptions.ExtendedProperties = true;
                     scriptingOptions.IncludeDatabaseContext = true;
                     MethodInfo mi = t.GetType().GetMethod("Script", new Type[] { typeof(ScriptingOptions) });
@@ -305,7 +327,20 @@ namespace TestDatabaseCreation
                         {
                             try
                             {
-                                targetDatabase.ExecuteNonQuery(stm);
+                                //CREATE TABLE Name(
+                                //) ON [DATAFILEGROUP]
+                                //Elimino la specifica del datafile group e opzioni varie lascio il default del database di destinazione
+                                if (stm.Contains("CREATE TABLE"))
+                                {
+                                    String newStm = stm;
+                                    int i = stm.IndexOf(") ON");
+                                    if (i >= 0)
+                                        newStm = stm.Substring(0,i + 1);
+                                    targetDatabase.ExecuteNonQuery(newStm);
+
+                                }else
+                                    targetDatabase.ExecuteNonQuery(stm);
+
                             }
                             catch (Exception e)
                             {
@@ -321,15 +356,22 @@ namespace TestDatabaseCreation
 
         }
 
+        //Copia di tutti gli oggetti a livello server di un determinato tipo.
         public void CopyServerObject<T>(string serverBasePath, Server sourceServer, Server targetServer, ICollection sourceCollection, ICollection targetCollection)
         {
             ScriptingOptions scriptingOptions = new ScriptingOptions();
-            String TBasePath = Path.Combine(serverBasePath, typeof(T).Name + "s"); //.Replace("Collection","s"));
+            
+            //Creo una directory dove scrivere i file degli script generati
+            String TBasePath = Path.Combine(serverBasePath, typeof(T).Name + "s"); 
             Directory.CreateDirectory(TBasePath);
 
             int errCount = 0;
+            
+            //Aggiorno interfaccia
             progressBar.Maximum = 0;
             progressBar.Maximum = sourceCollection.Count;
+        
+            //Creo una lista degli oggetti non di sistema da elaborare
             List<T> list = new List<T>();
             foreach (T t in sourceCollection)
             {
@@ -346,18 +388,27 @@ namespace TestDatabaseCreation
                 if (!isSystemObject) // && !Contains(targetCollection, Name))
                     list.Add(t);
             }
+
+            //Aggiorno l'interfaccia
             progressBar.Value = 0;
             progressBar.Maximum = list.Count;
 
+            //Per ogno oggetto nella lista da elaborare eseguo la creazione nel server di destinazione
             foreach (T t in list)
             {
                 String name = (String)t.GetType().GetProperty("Name").GetValue(t, null);
+                
+                //Aggiorno l'interfaccia utente
                 Application.DoEvents();
                 progressBar.Value += 1;
                 StatusAdvancing("EXECUTING", typeof(T).Name + " - " + sourceServer.Name + "." + name, progressBar.Value, progressBar.Maximum, errCount);
+
+                //Se l'oggetto non esiste nel server di destinazione lo creo
+                //TODO Da gestire meccaninso legato alla data di modifica in modo da tenere aggiornato ilserver di destinazione
                 if (!Contains(targetCollection, name))
                 {
-                    String fileName = Path.Combine(TBasePath, name.Replace(@"\", "_").Replace(@":", "_")) + ".sql";
+                    //Recupero dal db sorgente lo script per la creazione dell'oggetto
+                    String fileName = Path.Combine(TBasePath, name.Replace(@"\", "_").Replace(@":", "_").Replace("\\","_")) + ".sql";
                     scriptingOptions.FileName = fileName;
                     MethodInfo mi = t.GetType().GetMethod("Script", new Type[] { typeof(ScriptingOptions) });
 
@@ -371,12 +422,15 @@ namespace TestDatabaseCreation
                         errCount++;
                         Log(fileName, e, "");
                     }
+
+                    //Se ho recuperato lo script lo eseguo sul server di destinazione
                     if (scriptRows != null)
                     {
                         foreach (String stm in scriptRows)
                         {
                             try
                             {
+                                //Nel caso di script database elimino le informazioni sulla dislocazione fisica dei file db e lascio che venga usato il default nel server di destinazione
                                 if (stm.Contains("CREATE DATABASE"))
                                 {
                                     string newStm = "";
@@ -393,7 +447,7 @@ namespace TestDatabaseCreation
 
                                     targetServer.Databases["master"].ExecuteNonQuery(newStm);
                                 }
-                                else
+                                else //esecuzione standard
                                 {
                                     targetServer.Databases["master"].ExecuteNonQuery(stm);
                                 }
@@ -410,7 +464,6 @@ namespace TestDatabaseCreation
             }
 
         }
-
         
         //Imposto lo stato di avanzamento visivo delle elaborazioni
         public void StatusAdvancing(string phase, string label, int elabCount, int totCount, int errCount)
@@ -427,32 +480,39 @@ namespace TestDatabaseCreation
         //Scrivo un item sul file di log
         public void Log(String FileName, Exception e, String statement)
         {
-            String strLog = "LOGSTART".PadRight(100, '-') + @"\r\n";
-            strLog += e.ToString() + @"\r\n";
-            strLog += "OFFENDING_STATEMENT".PadRight(100, '-') + @"\r\n";
-            strLog += statement + @"\r\n";
-            strLog += "LOGEND".PadRight(100, '-') + @"\r\n";
+            String strLog = "LOG_START".PadRight(100, '-') + "\r\n";
+            strLog += "OFFENDING_STATEMENT" + "\r\n";
+            strLog += statement + "\r\n";
+            strLog += "EXCEPTION_TEXT" + "\r\n";
+            strLog += e.ToString() + "\r\n";
+            strLog += "LOG_END".PadRight(100, '-') + "\r\n";
 
             File.AppendAllText(FileName + @".log", strLog);
         }
 
-
-        public void UpdateServerXml()
+        //Creo i file xml di guida per l'elaborazione con la configurazione di default per tutti i databases di un server
+        public void XmlDriverFileForServerCreate()
         {
             foreach (Database database in sourceServer.Databases)
             {
                 if (!database.IsSystemObject)
                 {
-                    UpdateDatabaseXml(database);
+                    XmlDriverFileForDatabaseCreate(database);
                 }
             }
+            //Aggiorno lo stato visuale indicando che l'elaborazione e' terminata.
+            Status("Create xml driver files for server " + targetServer.Name + " completed.");
+            progressBar.Value = 0;
 
         }
 
-        public void UpdateDatabaseXml(Database database)
+        //Creo il file xml di guida per l'elaborazione per un singolo database
+        public void XmlDriverFileForDatabaseCreate(Database database)
         {
+            //Creo i file nella direcotry DatabaseXmlDrivers figlia della directory dell'eseguibile
             String databaseBasePath = Path.Combine(Application.StartupPath, "DatabaseXmlDrivers");
 
+            //Creo o apro il file di guida corrispondente al database
             XmlDocument document = new XmlDocument();
             String fileName = Path.Combine(databaseBasePath, database.Name + ".xml");
             XmlElement tables = null;
@@ -468,8 +528,11 @@ namespace TestDatabaseCreation
                 document.AppendChild(tables);
             }
 
+            //Aggiorno l'interfaccia
             progressBar.Maximum = 0;
             progressBar.Maximum = database.Tables.Count;
+            
+            //Creo la solita lista degli oggetti non di sistema da elaborare
             List<Table> list = new List<Table>();
             foreach (Table t in database.Tables)
             {
@@ -479,81 +542,100 @@ namespace TestDatabaseCreation
                 if (!t.IsSystemObject) // && !Contains(targetCollection, Name))
                     list.Add(t);
             }
+
+            //Aggiorno l'interfaccia
             progressBar.Value = 0;
             progressBar.Maximum = list.Count;
 
+            //PEr ogni tabella da elaborare creo un nodo sul file xml
             foreach (Table table in list)
             {
                 Application.DoEvents();
                 progressBar.Value += 1;
                 StatusAdvancing("EXECUTING", typeof(Table).Name + " - " + sourceServer.Name + "." + database.Name + "." + table.Schema + "." + table.Name, progressBar.Value, progressBar.Maximum, 0);
+           
+                //Se non esiste il nodo per la tabella lo creo.
+                tableNode = (XmlElement)document.SelectSingleNode("/tables/table[@name='[" + database.Name + "].[" + table.Schema + "].[" + table.Name.Replace("'", "").Trim() + "]']");
+                if (tableNode == null)
                 {
-                    tableNode = (XmlElement)document.SelectSingleNode("/tables/table[@name='[" + database.Name + "].[" + table.Schema + "].[" + table.Name.Replace("'", "").Trim() + "]']");
-                    if (tableNode == null)
-                    {
-                        tableNode = document.CreateElement("table");
-                        tables.AppendChild(tableNode);
-                    }
-
-                    XmlAttribute attrName = tableNode.Attributes["name"];
-                    if (attrName == null)
-                    {
-                        attrName = document.CreateAttribute("name");
-                        tableNode.Attributes.Append(attrName);
-                        attrName.Value = "[" + database.Name + "].[" + table.Schema + "].[" + table.Name + "]";
-                    }
-
-
-                    XmlAttribute attrOp = tableNode.Attributes["operation"];
-                    if (attrOp == null)
-                    {
-                        attrOp = document.CreateAttribute("operation");
-                        attrOp.Value = "NoUpdate";
-                        tableNode.Attributes.Append(attrOp);
-                    }
-
-                    XmlAttribute attrOpDdl = tableNode.Attributes["operationddl"];
-                    if (attrOpDdl == null)
-                    {
-                        attrOpDdl = document.CreateAttribute("operationddl");
-                        attrOpDdl.Value = "NoUpdate";
-                        tableNode.Attributes.Append(attrOpDdl);
-                    }
-
-                    XmlAttribute attrCount = tableNode.Attributes["count"];
-                    if (attrCount == null)
-                    {
-                        attrCount = document.CreateAttribute("count");
-                        tableNode.Attributes.Append(attrCount);
-                    }
-                    attrCount.Value = table.RowCount.ToString();
-                    //DataSet dt = targetDatabase.ExecuteWithResults("SELECT Count(*) FROM [" + table.Name + "] WITH(NOLOCK) ");
-                    //int rows = (int)dt.Tables[0].Rows[0][0];
+                    tableNode = document.CreateElement("table");
+                    tables.AppendChild(tableNode);
                 }
+
+                //Nome della tabella
+                XmlAttribute attrName = tableNode.Attributes["name"];
+                if (attrName == null)
+                {
+                    attrName = document.CreateAttribute("name");
+                    tableNode.Attributes.Append(attrName);
+                    attrName.Value = "[" + database.Name + "].[" + table.Schema + "].[" + table.Name + "]";
+                }
+
+                //Operazione da eseguire nel caso di caricamento dati.
+                //E' il nome di un metodo in questa classe che esegue l'operazione
+                XmlAttribute attrOp = tableNode.Attributes["operation"];
+                if (attrOp == null)
+                {
+                    attrOp = document.CreateAttribute("operation");
+                    attrOp.Value = "TableClone";
+                    tableNode.Attributes.Append(attrOp);
+                }
+
+                //Operazione da eseguire nel caso di creazione schema
+                //TODO Per ora non e' gestito questo attributo.
+                //Bisogna prevedere il caso per escludere le tabelle spurie nel db di sorgente
+                //XmlAttribute attrOpDdl = tableNode.Attributes["operationddl"];
+                //if (attrOpDdl == null)
+                //{
+                //    attrOpDdl = document.CreateAttribute("operationddl");
+                //    attrOpDdl.Value = "NoUpdate";
+                //    tableNode.Attributes.Append(attrOpDdl);
+                //}
+
+                //Numero di righe della tabella
+                XmlAttribute attrCount = tableNode.Attributes["count"];
+                if (attrCount == null)
+                {
+                    attrCount = document.CreateAttribute("count");
+                    tableNode.Attributes.Append(attrCount);
+                }
+                attrCount.Value = table.RowCount.ToString();
+
+                //Metood alternativo di prendere il numeo di righe della tabella
+                //DataSet dt = targetDatabase.ExecuteWithResults("SELECT Count(*) FROM [" + table.Name + "] WITH(NOLOCK) ");
+                //int rows = (int)dt.Tables[0].Rows[0][0];
 
             }
             Directory.CreateDirectory(Path.GetDirectoryName(fileName));
             document.Save(fileName);
+
+            //Aggiorno lo stato visuale indicando che l'elaborazione e' terminata.
+            Status("Create xml driver files for database " + database.Name + " completed.");
+            progressBar.Value = 0;
+
         }
 
-        public void UpdateServerData()
+        //Replica i dati sul server sorgente nel server destinazione
+        public void ServerDataClone()
         {
             Status("Start update data for server " + sourceServer.Name + ".");
+            //PEr ogni database lancio il metodo di clone data per il database
             foreach (Database database in sourceServer.Databases)
             {
                 if (!database.IsSystemObject)
-                    UpdateDatabaseData(database.Name);
+                    DatabaseDataClone(database.Name);
             }
             Status("Update data for server " + sourceServer.Name + " completed.");
         }
 
-        public void UpdateDatabaseData(String sourceDatabaseName)
+        //Replica i dati dal database del server sorgente al database corrispondente nle server destinazione.
+        //L'operazione da eseguirre puo essere configurata mettendo il nome di un metodo custom nel campo operation del file xml di guida.
+        public void DatabaseDataClone(String sourceDatabaseName)
         {
+            //Recupero l'oggetto database sorgente
             Database sourceDatabase = sourceServer.Databases[sourceDatabaseName];
 
-            string databaseBasePath = Path.Combine(ServerBasePath(), "Databases");
-            databaseBasePath = Path.Combine(databaseBasePath, sourceDatabase.Name);
-
+            //Apro il file xml di guida per l'elaborazione
             XmlDocument document = new XmlDocument();
             String fileName = Path.Combine(Path.Combine(Application.StartupPath, "DatabaseXmlDrivers"), sourceDatabase.Name + ".xml");
             //String fileName = Path.Combine(databaseBasePath, sourceDatabase.Name + ".xml");
@@ -565,10 +647,15 @@ namespace TestDatabaseCreation
                 tablesNode = document.DocumentElement;
             }
 
+            //Recupero l'oggetto database di destinazione
             Database targetDatabase = targetServer.Databases[sourceDatabase.Name];
-            List<Table> tables = new List<Table>();
+            
+            //Aggiorno l'interfaccia
             progressBar.Maximum = 0;
             progressBar.Maximum = sourceDatabase.Tables.Count;
+
+            //Recupero tutte le tabelle non di sistema sul db sorgente
+            List<Table> tables = new List<Table>();
             foreach (Table sourceTable in sourceDatabase.Tables)
             {
                 Application.DoEvents();
@@ -579,37 +666,44 @@ namespace TestDatabaseCreation
                     tables.Add(sourceTable);
                 }
             }
+            
+            //Aggiorno l'interfaccia
             progressBar.Value = 0;
             progressBar.Maximum = tables.Count;
 
+            //PEr ogni tabella da elaborare
             foreach (Table sourceTable in tables)
             {
+                //Aggiorno l'interfaccia
                 Application.DoEvents();
                 progressBar.Value += 1;
-
                 StatusAdvancing("EXECUTING", typeof(Table).Name + " - " + sourceServer.Name + "." + sourceDatabase.Name + "." + sourceTable.Schema + "." + sourceTable.Name, progressBar.Value, progressBar.Maximum, 0);
 
+                //Recupero il nodo della tabella dal file xml di guida.
                 String fullName = @"[" + sourceDatabase.Name + @"].[" + sourceTable.Schema + @"].[" + sourceTable.Name + @"]";
-
                 tableNode = (XmlElement)tablesNode.SelectSingleNode("table[@name='" + fullName + "']");
                 if (tableNode != null)
                 {
+                    //Recupero l'operazione da eseguire.
+                    //TODO PEr ora deve essere un metodo pubblico di questa classe
+                    //Si puo' pensare a uno schema di plugin piu' sofisticato che prevede la creazione di una classe specifica dinamicamente
+                    //Sono gia' implementate le operazioni:
+                    //NoUpdate che non fa nulla
+                    //TableUpdate che copia tutta la tabella (limitata a 100000 records)
                     string operation = tableNode.Attributes["operation"].Value;
-                    //if (operation == "TableUpdate" && (fullName == "[crs].[crm_user].[user]"))
-                    //if (operation == "DestinationUpdate")
-                    //if (operation == "TableUpdate")
-                    //    Debugger.Break();
-                    //if (operation == "FlightUpdate" || operation == "FlightSegmentUpdate")
+                    
+                    //Recupero e chiamo il metodo per la copia dei dati
+                    MethodInfo m = this.GetType().GetMethod(operation);
+                    if (m != null)
                     {
-                        MethodInfo m = this.GetType().GetMethod(operation);
-                        if (m != null)
-                        {
-
-                            m.Invoke(this, new object[] { sourceDatabase, targetDatabase, sourceTable, tableNode, "", true });
-                        }
+                        //Vedi Metodo TableUpdate per la firma del metodo e il significato dei parametri.
+                        //Ogni metodo custom deve rispettare questa firma.
+                        m.Invoke(this, new object[] { sourceDatabase, targetDatabase, sourceTable, tableNode, "", true });
                     }
                 }
             }
+
+            //Aggiorno l'interfaccia
             Status("Update data for database " + sourceServer.Name + "." + sourceDatabase.Name + " completed.");
             progressBar.Value = 0;
             progressBar.Maximum = 0;
@@ -619,6 +713,7 @@ namespace TestDatabaseCreation
             targetDatabase = null;
         }
 
+        //Aggiorno lo stato dell'elaborazione
         void Status(string t)
         {
             statusLabel.Text = t;
@@ -627,163 +722,92 @@ namespace TestDatabaseCreation
             Debug.Print(t);
 
         }
-
-        public List<CustomOperationData> SearchCustomUpdateTableList(String CustomOperationName)
+        
+        //Metodo per la copia di tutti i dati di una tabella dalla sorgente alla destinazione
+        //Questo metodo puo' essere personalizzato per avere comportamenti di copia diversi in base alla tabella.
+        //Mettere nel campo operation del file xml di guida il nome di un metodo custom con la stessa firma e 
+        //durante la copia dei dati verra' chiamato il metodo indicato nell'xml.
+        public void TableClone(Database sourceDatabase, Database targetDatabase, Table sourceTable, XmlElement tableNode, String w, bool deleteFirst)
         {
-            List<CustomOperationData> list = new List<CustomOperationData>();
+            //Creo una directory dove scrivere i file di log degli errori
+            String TBasePath = Path.Combine(ServerBasePath(), typeof(Database).Name + "s"); 
+            Directory.CreateDirectory(TBasePath);
 
-            foreach (Database database in targetServer.Databases)
-            {
-                string databaseBasePath = Path.Combine(ServerBasePath(), "Databases");
-                databaseBasePath = Path.Combine(databaseBasePath, database.Name);
-
-                XmlDocument document = new XmlDocument();
-                String fileName = Path.Combine(databaseBasePath, database.Name + ".xml");
-                XmlElement tablesNode = null;
-                XmlElement tableNode = null;
-                if (File.Exists(fileName))
-                {
-                    document.Load(fileName);
-                    tablesNode = document.DocumentElement;
-                    foreach (XmlElement table in tablesNode.ChildNodes)
-                    {
-                        string operation = table.Attributes["operation"].Value;
-                        if (operation == CustomOperationName)
-                        {
-                            string CustomOpData = table.Attributes["CustomOperation"].Value;
-                            string[] fields = CustomOpData.Split('=');
-                            CustomOperationData cu = new CustomOperationData();
-                            cu.childField = fields[0];
-                            if (fields.Length == 2)
-                                cu.parentField = fields[1];
-                            cu.Table = table.Attributes["name"].Value;
-                            list.Add(cu);
-                        }
-
-                    }
-                }
-            }
-            return list;
-        }
-
-        public CustomOperationData CustomUpdateDataGet(String databaseName, String tableSchema, String tableName)
-        {
-            CustomOperationData cu = null;
-
-            string databaseBasePath = Path.Combine(ServerBasePath(), "Databases");
-            databaseBasePath = Path.Combine(databaseBasePath, databaseName);
-
-            XmlDocument document = new XmlDocument();
-            String fileName = Path.Combine(Path.Combine(Application.StartupPath, "DatabaseXmlDrivers"), databaseName + ".xml");
-            //String fileName = Path.Combine(databaseBasePath, databaseName + ".xml");
-            XmlElement tablesNode = null;
-            XmlElement tableNode = null;
-            if (File.Exists(fileName))
-            {
-                document.Load(fileName);
-                tablesNode = document.DocumentElement;
-                //String fullName = @"[" + databaseName + @"].[" + tableSchema + @"].[" + tableName + @"]";
-                tableNode = (XmlElement)tablesNode.SelectSingleNode("table[@name='" + tableName + "']");
-                string CustomOpData = tableNode.Attributes["CustomOperation"].Value;
-                string[] fields = CustomOpData.Split('=');
-                cu = new CustomOperationData();
-                cu.childField = fields[0];
-                cu.parentField = fields[1];
-                cu.Table = tableNode.Attributes["name"].Value;
-            }
-
-            return cu;
-        }
-
-        public void IdentitiesUpdate(Database sourceDatabase, Database targetDatabase, Table sourceTable, XmlElement tableNode, String w, bool deleteFirst)
-        {
-
-        }
-
-
-        public void TableUpdate(Database sourceDatabase, Database targetDatabase, Table sourceTable, XmlElement tableNode, String w, bool deleteFirst)
-        {
-            Table targetTable;
+            //Determino nome tabella e nome file di log
             String tbName = "[" + sourceDatabase.Name + "].[" + sourceTable.Schema + "].[" + sourceTable.Name + "]";
-            //SqlDataReader reader = sourceServerConnection.ExecuteReader( @"SELECT TOP 1000 * FROM " + tbName);
+            String logFileName = Path.Combine(TBasePath, tbName.Replace("[","").Replace("]","").Replace(@"\", "_").Replace(@":", "_")) + ".CloneData.log";
+
             SqlDataReader reader = null;
+
+            //Memorizzo timestamp per inizio elaborazione
             DateTime start = DateTime.Now;
-            targetTable = targetDatabase.Tables[sourceTable.Name, sourceTable.Schema];
-            //if (targetTable.RowCount == 0)
+            
+            try
             {
-                try
-                {
-                    sourceServer.ConnectionContext.Connect();
-                    String s = @"SELECT TOP 100000 * FROM " + tbName + " with(nolock) ";
-                    if (w.Length > 0)
-                        s += " WHERE " + w;
+                //Mi connetto al server sorgente
+                sourceServer.ConnectionContext.Connect();
 
+                //Costruisco la select per il reader da creare nel database sorgente
+                String s = @"SELECT TOP " + MAXROWS_FETCHED.ToString() + " * FROM " + tbName + " with(nolock) ";
+                //Select senza limiti
+                //String s = @"SELECT * FROM " + tbName + " with(nolock) ";
+                if (w.Length > 0)
+                    s += " WHERE " + w;
 
-                    statusRows.Text = @"Start Copy " + tbName;
-                    statusRows.Refresh();
-
-                    reader = sourceServer.ConnectionContext.ExecuteReader(s);
-
-                    // ensure that our destination table is empty:
-                    targetServer.ConnectionContext.Connect();
-                    if (deleteFirst)
-                        targetServer.ConnectionContext.ExecuteNonQuery("DELETE FROM " + tbName);
-
-                    SqlBulkCopy sqlBulk = null;
-                    //if (targetTable.Name == "SoftwareCRS")
-                    {
-                        //targetTable.i
-                        //targetServer.ConnectionContext.ExecuteNonQuery("SET IDENTITY_INSERT " + tbName + " ON ");
-                        sqlBulk = new SqlBulkCopy(targetServer.ConnectionContext.SqlConnectionObject,
-                            SqlBulkCopyOptions.KeepIdentity | SqlBulkCopyOptions.UseInternalTransaction, null);
-                    }
-                    //else
-                    //{
-                    //    sqlBulk = new SqlBulkCopy(targetServer.ConnectionContext.SqlConnectionObject);
-                    //}
-                    //targetServer.ConnectionContext.ExecuteNonQuery("DELETE FROM " + tbName);
-                    //Debug.Print("Beginning Copy " + tbName);
-                    //targetServerConnection.SqlConnectionObject.Open();
-                    // using SqlDataReader to copy the rows:
-
-
-                    //using (SqlBulkCopy sqlBulk = new SqlBulkCopy(targetServer.ConnectionContext.SqlConnectionObject))
-                    //using (SqlBulkCopy s = new SqlBulkCopy(targetServerConnection.SqlConnectionObject))
-                    {
-                        sqlBulk.BulkCopyTimeout = 120;
-                        sqlBulk.BatchSize = 100;
-                        sqlBulk.DestinationTableName = tbName;
-                        sqlBulk.NotifyAfter = 100;
-                        sqlBulk.SqlRowsCopied += new SqlRowsCopiedEventHandler(s_SqlRowsCopied);
-                        sqlBulk.WriteToServer(reader);
-                        sqlBulk.Close();
-                    }
-                    sqlBulk = null;
-
-                }
-                catch (Exception e)
-                {
-                    Debugger.Break();
-                }
-                finally
-                {
-                    if (reader != null)
-                    {
-                        if (!reader.IsClosed)
-                            reader.Close();
-                        reader = null;
-                    }
-                    sourceServer.ConnectionContext.Disconnect();
-                    targetServer.ConnectionContext.Disconnect();
-                }
-                //Debug.Print("Copy complete in {0}  seconds.", DateTime.Now.Subtract(start).Seconds);
-                statusRows.Text = String.Format("Copy complete in {0}  seconds.", DateTime.Now.Subtract(start).Seconds);
+                //Aggiorno l'interfaccia
+                statusRows.Text = @"Start Copy " + tbName;
                 statusRows.Refresh();
-                Application.DoEvents();
+
+                //Creo il reader nel server sorgente
+                reader = sourceServer.ConnectionContext.ExecuteReader(s);
+
+                //Mi connetto al server di destinazione
+                targetServer.ConnectionContext.Connect();
+
+                //Se richiesta la cancellazione dei dati precedenti cancello i dati
+                if (deleteFirst)
+                    targetServer.ConnectionContext.ExecuteNonQuery("DELETE FROM " + tbName);
+
+                SqlBulkCopy sqlBulk = null;
+                sqlBulk = new SqlBulkCopy(targetServer.ConnectionContext.SqlConnectionObject,
+                            SqlBulkCopyOptions.KeepIdentity | 
+                            SqlBulkCopyOptions.UseInternalTransaction 
+                        , null);
+                sqlBulk.BulkCopyTimeout = 120;
+                sqlBulk.BatchSize = 100;
+                sqlBulk.DestinationTableName = tbName;
+                sqlBulk.NotifyAfter = 100;
+                //Aggancio l'evento generato dal blulk loader per il progresso dell'elaborazione
+                sqlBulk.SqlRowsCopied += new SqlRowsCopiedEventHandler(SqlRowsCopied); 
+                sqlBulk.WriteToServer(reader);
+                sqlBulk.Close();
+                sqlBulk = null;
+
             }
+            catch (Exception e)
+            {
+                Log(logFileName, e, "Copy table data");
+            }
+            finally
+            {
+                if (reader != null)
+                {
+                    if (!reader.IsClosed)
+                        reader.Close();
+                    reader = null;
+                }
+                sourceServer.ConnectionContext.Disconnect();
+                targetServer.ConnectionContext.Disconnect();
+            }
+
+            //Aggiorno interfaccia
+            statusRows.Text = String.Format("Copy complete in {0}  seconds.", DateTime.Now.Subtract(start).Seconds);
+            statusRows.Refresh();
+            Application.DoEvents();
         }
 
-        private void s_SqlRowsCopied(object sender, SqlRowsCopiedEventArgs e)
+        //Aggiorno lo stato della copia dei dati
+        private void SqlRowsCopied(object sender, SqlRowsCopiedEventArgs e)
         {
             statusRows.Text = "Copied " + e.RowsCopied.ToString() + " rows.";
             statusRows.Refresh();
@@ -807,6 +831,7 @@ namespace TestDatabaseCreation
 
     }
 
+    //Classe di appoggio per i dati di configurazione per un database
     public class DatabaseData
     {
         public XmlDocument xmlDocument;
@@ -814,13 +839,7 @@ namespace TestDatabaseCreation
         public Database database;
     }
 
-    public class CustomOperationData
-    {
-        public String parentField;
-        public String Table;
-        public String childField;
-    }
-
+    //Classe di appoggio per la definizione delle connessioni ai server
     public class ServerInfo
     {
         public String ConnectionString;

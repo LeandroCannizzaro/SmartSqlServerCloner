@@ -1,3 +1,4 @@
+//Author: leandro.cannizzaro@gmail.com
 using System;
 using System.Collections.Generic;
 using System.Windows.Forms;
@@ -10,13 +11,13 @@ namespace TestDatabaseCreation
     {
         private List<ServerInfo> sourceServers = new List<ServerInfo>();
         private List<ServerInfo> targetServers = new List<ServerInfo>();
- 
+
 
         private List<DatabaseData> databaseList;
-        
+
         //Riferimento alla Classe che effettua il lavoro di sincronizzazione
         private TestDbManager testDbManager = new TestDbManager();
-        
+
         //Costruttore della window form
         public frmTestDbManager()
         {
@@ -50,14 +51,16 @@ namespace TestDatabaseCreation
             chTableRows.TextAlign = HorizontalAlignment.Right;
             chTableRows.Width = 80;
             ColumnHeader chTableOp = listTables.Columns.Add("Operation");
-            chTableOp.Width = 200;
-            ColumnHeader chTableOpDdl = listTables.Columns.Add("Schema Operation");
-            chTableOpDdl.Width = 200;
-        
+            chTableOp.Width = 150;
+
+            //TODO Da gestire operazioni custom per la creazione dello schema
+            //ColumnHeader chTableOpDdl = listTables.Columns.Add("Schema Operation");
+            //chTableOpDdl.Width = 150;
+
         }
 
         //Carica la lista dei server sorgenti
-        void FillSourceServers()
+        private void FillSourceServers()
         {
             //Riempe il combo con la lista dei server di destinazione.
             //TODO Ora carica un db fisso da parametrizzare su un file xml o in altro modo
@@ -72,7 +75,7 @@ namespace TestDatabaseCreation
         }
 
         //Carica la lista dei server di destinazione
-        void FillTargetServers()
+        private void FillTargetServers()
         {
             //Riempe il combo con la lista dei server di destinazione.
             //TODO Ora carica un db fisso da parametrizzare su un file xml o in altro modo
@@ -100,47 +103,17 @@ namespace TestDatabaseCreation
 
         }
 
-        //Lancia la procedura di creazione locale della stuttura dei databases del server selezionato.
-        //ATTENZIONE La creazione non e' incrementale e non cancella la struttura presente nel database/server di destinazione.
-        //Cancellare i database di destinazione manualmente (se necessario) prima di lanciare la procedura
-        private void btnSchema_Click(object sender, EventArgs e)
-        {
-            testDbManager.ServerSchemaClone();
-
-        }
-
-        //Lancia la procedura di aggiornamento dei dati di tutti i database del server selezionato
-        private void btnData_Click(object sender, EventArgs e)
-        {
-            this.Cursor = Cursors.WaitCursor;
-            testDbManager.UpdateServerData();
-            this.Cursor = Cursors.Default;
-        }
-
-        //Lancia la procedura di creazione locale della stuttura del database selezionato
-        //ATTENZIONE La creazione non e' incrementale e non cancella la struttura presente nel database/server di destinazione.
-        //Cancellare i database di destinazione manualmente (se necessario) prima di lanciare la procedura
-        private void btnUpdateDatabaseSchema_Click(object sender, EventArgs e)
-        {
-            this.Cursor = Cursors.WaitCursor;
-            if (listDatabases.FocusedItem != null)
-                testDbManager.DatabaseSchemaClone(listDatabases.FocusedItem.Text);
-            this.Cursor = Cursors.Default;
-        }
-
-        //Lancia la procedura di aggiornamento dei dati del database selezionato
-        private void btnUpdateDatabaseData_Click(object sender, EventArgs e)
-        {
-            this.Cursor = Cursors.WaitCursor;
-            if (listDatabases.FocusedItem != null)
-                testDbManager.UpdateDatabaseData(((DatabaseData)listDatabases.FocusedItem.Tag).database.Name );
-            this.Cursor = Cursors.Default;
-
-        }
-
         //Cambia il database selezionato e viene ricreata la lista delle tabelle 
-        //I dati vengono presi dal file xml di guida alla duplicazione del db.
         private void listDatabases_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            ShowTableList();
+        }
+
+
+
+        //Crea la lista delle tabelle del database selezionato 
+        //I dati vengono presi dal file xml di guida alla duplicazione del db.
+        private void ShowTableList()
         {
             this.Cursor = Cursors.WaitCursor;
             if (listDatabases.FocusedItem != null)
@@ -164,29 +137,27 @@ namespace TestDatabaseCreation
                         subItemOp.Text = table.Attributes["operation"].Value;
                         i.SubItems.Add(subItemOp);
 
-                        ListViewItem.ListViewSubItem subItemOpDdl = new ListViewItem.ListViewSubItem();
-                        subItemOpDdl.Name = @"Operation Ddl";
-                        subItemOpDdl.Text = table.Attributes["operationddl"].Value;
-                        i.SubItems.Add(subItemOpDdl);
+                        //TODO Da implementare operazioni custom anche per schema per escludere elementi spuri e merdaccia varia che magari si e' accumulata nel db di produzione
+                        //ListViewItem.ListViewSubItem subItemOpDdl = new ListViewItem.ListViewSubItem();
+                        //subItemOpDdl.Name = @"Operation Ddl";
+                        //subItemOpDdl.Text = table.Attributes["operationddl"].Value;
+                        //i.SubItems.Add(subItemOpDdl);
 
                     }
                 }
             }
             this.Cursor = Cursors.Default;
         }
-        
-        //Crea a partire dalla lista delle tabelle dei database del server il file xml di guida per l'elaborazione
-        private void btnUpdateServerXml_Click(object sender, EventArgs e)
-        {
-            this.Cursor = Cursors.WaitCursor;
-            testDbManager.UpdateServerXml();
-            this.Cursor = Cursors.Default;
-        }
 
         //Cambia il server sorgente mi connetto al nuovo server e aggiorno la lista dei database disponibili
         private void cboSourceServer_SelectedIndexChanged(object sender, EventArgs e)
         {
+            ShowDatabaseList();
+        }
 
+        private void ShowDatabaseList()
+        {
+            listDatabases.Items.Clear();
             testDbManager.SourceServerConnect((ServerInfo)cmbSourceServer.SelectedItem);
             databaseList = testDbManager.DatabaseList();
             foreach (DatabaseData dbd in databaseList)
@@ -198,21 +169,93 @@ namespace TestDatabaseCreation
                 i.Tag = dbd;
                 i.SubItems.Add(subItem);
             }
-
         }
 
-        //Cambia il server di destinazione mi connetto al nuovo server
+    //Cambia il server di destinazione mi connetto al nuovo server
         private void cboTargetServer_SelectedIndexChanged(object sender, EventArgs e)
         {
             testDbManager.TargetServerConnect((ServerInfo)cmbTargetServer.SelectedItem);
         }
 
         //Aggiorno il file di xml di guida all'elaborazione relativo al database selezionato
-        private void btnUpdateDatabaseXml_Click(object sender, EventArgs e)
+        private void btnCreateDatabaseXmlDriver_Click(object sender, EventArgs e)
         {
             this.Cursor = Cursors.WaitCursor;
             if (listDatabases.FocusedItem != null)
-                testDbManager.UpdateDatabaseXml(((DatabaseData)listDatabases.FocusedItem.Tag).database);
+            {
+                testDbManager.XmlDriverFileForDatabaseCreate(((DatabaseData) listDatabases.FocusedItem.Tag).database);
+                ShowDatabaseList();
+                ShowTableList();
+            }
+            this.Cursor = Cursors.Default;
+        }
+
+        //Crea a partire dalla lista delle tabelle dei database del server il file xml di guida per l'elaborazione
+        private void btnCreateServerXmlDriver_Click(object sender, EventArgs e)
+        {
+            this.Cursor = Cursors.WaitCursor;
+            testDbManager.XmlDriverFileForServerCreate();
+            foreach (DatabaseData dbd in databaseList)
+            {
+                ListViewItem i = listDatabases.Items.Add(dbd.database.Name);
+                ListViewItem.ListViewSubItem subItem = new ListViewItem.ListViewSubItem();
+                subItem.Name = @"Tables";
+                subItem.Text = dbd.database.Tables.Count.ToString();
+                i.Tag = dbd;
+                i.SubItems.Add(subItem);
+            }
+
+            ShowDatabaseList();
+            ShowTableList();
+            this.Cursor = Cursors.Default;
+        }
+
+        //Lancia la procedura di creazione locale della stuttura dei databases del server selezionato.
+        //ATTENZIONE La creazione non e' incrementale e non cancella la struttura presente nel database/server di destinazione.
+        //Cancellare i database di destinazione manualmente (se necessario) prima di lanciare la procedura
+        private void btnSchema_Click(object sender, EventArgs e)
+        {
+            this.Cursor = Cursors.WaitCursor;
+            testDbManager.ServerSchemaClone();
+            this.Cursor = Cursors.Default;
+
+        }
+
+
+        //Lancia la procedura di creazione locale della stuttura del database selezionato
+        //ATTENZIONE La creazione non e' incrementale e non cancella la struttura presente nel database/server di destinazione.
+        //Cancellare i database di destinazione manualmente (se necessario) prima di lanciare la procedura
+        private void btnCloneDatabaseSchema_Click(object sender, EventArgs e)
+        {
+            this.Cursor = Cursors.WaitCursor;
+            if (listDatabases.FocusedItem != null)
+                testDbManager.DatabaseSchemaClone(listDatabases.FocusedItem.Text);
+            this.Cursor = Cursors.Default;
+        }
+
+        //Crea la struttura di tutti i database del server sorgente nel server destinazione
+        private void btnCloneAllDatabaseSchema_Click(object sender, EventArgs e)
+        {
+            this.Cursor = Cursors.WaitCursor;
+            testDbManager.DatabasesSchemaClone();
+            this.Cursor = Cursors.Default;
+        }
+
+
+        //Lancia la procedura di aggiornamento dei dati di tutti i database del server selezionato
+        private void btnData_Click(object sender, EventArgs e)
+        {
+            this.Cursor = Cursors.WaitCursor;
+            testDbManager.ServerDataClone();
+            this.Cursor = Cursors.Default;
+        }
+        
+        //Lancia la procedura di aggiornamento dei dati del database selezionato
+        private void btnCloneDatabaseData_Click(object sender, EventArgs e)
+        {
+            this.Cursor = Cursors.WaitCursor;
+            if (listDatabases.FocusedItem != null)
+                testDbManager.DatabaseDataClone(((DatabaseData)listDatabases.FocusedItem.Tag).database.Name );
             this.Cursor = Cursors.Default;
         }
 
