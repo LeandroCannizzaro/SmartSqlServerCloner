@@ -15,11 +15,11 @@ using System.Xml;
 using Microsoft.SqlServer.Management.Common;
 using Microsoft.SqlServer.Management.Smo;
 
-namespace TestDatabaseCreation
+namespace SmartSqlServerCloner
 {
     //Copia la struttura completa da un server/database sorgente a un server/database destinazione
     //Copia i dati da un server/database sorgente a un server/database destinazione. Usando se richiesto una copia personalizzabile per tabella
-    public class TestDbManager
+    public class SmartSqlServerCloner
     {
         //Numero massimo di righe copiate dalla sorgente alla destinazione
         //E' basso per il debug (Modificare o eliminare quando si usa in produzione)

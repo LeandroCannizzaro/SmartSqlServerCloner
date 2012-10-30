@@ -4,10 +4,10 @@ using System.Collections.Generic;
 using System.Windows.Forms;
 using System.Xml;
 
-namespace TestDatabaseCreation
+namespace SmartSqlServerCloner
 {
     //Classe per l'interfaccia utente di tipo windows.forms.
-    public partial class frmTestDbManager : Form
+    public partial class frmSmartSqlServerCloner : Form
     {
         private List<ServerInfo> sourceServers = new List<ServerInfo>();
         private List<ServerInfo> targetServers = new List<ServerInfo>();
@@ -16,10 +16,10 @@ namespace TestDatabaseCreation
         private List<DatabaseData> databaseList;
 
         //Riferimento alla Classe che effettua il lavoro di sincronizzazione
-        private TestDbManager testDbManager = new TestDbManager();
+        private SmartSqlServerCloner testDbManager = new SmartSqlServerCloner();
 
         //Costruttore della window form
-        public frmTestDbManager()
+        public frmSmartSqlServerCloner()
         {
             InitializeComponent();
 

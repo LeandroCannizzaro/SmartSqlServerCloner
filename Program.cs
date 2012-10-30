@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows.Forms;
 
-namespace TestDatabaseCreation
+namespace SmartSqlServerCloner
 {
     static class Program
     {
@@ -15,7 +15,7 @@ namespace TestDatabaseCreation
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new frmTestDbManager());
+            Application.Run(new frmSmartSqlServerCloner());
         }
     }
 }

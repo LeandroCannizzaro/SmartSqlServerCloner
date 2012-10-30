@@ -1,6 +1,6 @@
-namespace TestDatabaseCreation
+namespace SmartSqlServerCloner
 {
-    partial class frmTestDbManager
+    partial class frmSmartSqlServerCloner
     {
         /// <summary>
         /// Required designer variable.
@@ -279,7 +279,7 @@ namespace TestDatabaseCreation
             this.grpServer.TabStop = false;
             this.grpServer.Text = "Operations for server";
             // 
-            // frmTestDbManager
+            // frmSmartDatabaseCloner
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
@@ -298,8 +298,8 @@ namespace TestDatabaseCreation
             this.Controls.Add(this.listDatabases);
             this.Controls.Add(this.StatusRows);
             this.Controls.Add(this.lblStatus);
-            this.Name = "frmTestDbManager";
-            this.Text = "Test database manager";
+            this.Name = "frmSmartDatabaseCloner";
+            this.Text = "Smart Sql Server Cloner";
             this.Load += new System.EventHandler(this.frmTestDbManager_Load);
             this.grpAllDatabases.ResumeLayout(false);
             this.grpSelectedDatabase.ResumeLayout(false);

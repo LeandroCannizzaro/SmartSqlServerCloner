@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-namespace TestDatabaseCreation.Properties {
+namespace SmartSqlServerCloner.Properties {
     
     
     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
